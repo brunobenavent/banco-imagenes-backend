@@ -1,0 +1,466 @@
+// src/routes/images.js
+const express = require('express');
+const multer = require('multer');
+const path = require('path');
+const { Image } = require('../models/Image');
+const { FilterOptions } = require('../models/FilterOptions');
+const { cloudinaryService } = require('../services/cloudinary');
+const { dantiaService } = require('../services/dantia');
+const config = require('../config');
+const { authenticate, authorize } = require('../middleware/auth');
+
+const router = express.Router();
+
+// Configure multer for memory storage
+const storage = multer.memoryStorage();
+const upload = multer({
+  storage,
+  limits: {
+    fileSize: config.maxFileSize
+  },
+  fileFilter: (req, file, cb) => {
+    if (config.allowedMimeTypes.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Solo se permiten archivos JPG/PNG.'));
+    }
+  }
+});
+
+/**
+ * Generate unique suffix for new uploads
+ * Always starts from 100 and auto-increments based on existing images
+ */
+async function getNextSuffix(articleCode) {
+  // Find all images for this article code and get the highest suffix
+  const lastImage = await Image.findOne({ articleCode })
+    .sort({ suffix: -1 })
+    .select('suffix');
+  
+  if (!lastImage) {
+    return 100; // First image for this article
+  }
+  
+  return lastImage.suffix + 1;
+}
+
+/**
+ * Check if exact duplicate (same articleCode + suffix) exists
+ */
+async function checkDuplicate(articleCode, suffix) {
+  const existing = await Image.findOne({ articleCode, suffix });
+  return !!existing;
+}
+
+/**
+ * Parse filename to extract article code
+ * Ignore suffix - we auto-generate it
+ */
+function parseFilename(filename) {
+  const name = path.parse(filename).name;
+  
+  // Match pattern: 6 digits (optionally -3 digits, but we ignore this)
+  const match = name.match(/^(\d{6})/);
+  
+  if (!match) {
+    return null;
+  }
+  
+  return {
+    articleCode: match[1]
+  };
+}
+
+/**
+ * POST /api/images/upload
+ * Upload image - Editor/Admin only
+ */
+router.post('/upload', 
+  authenticate, 
+  authorize('editor', 'admin'), 
+  upload.single('image'),
+  async (req, res, next) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ message: 'No se ha subido ningún archivo.' });
+      }
+      
+      const originalFilename = req.file.originalname;
+      
+      // Get article code from body or query param
+      let articleCode = req.body.code || req.query.code || '';
+      
+      // If not provided, try to parse from filename
+      if (!articleCode) {
+        const parsed = parseFilename(originalFilename);
+        if (!parsed) {
+          return res.status(400).json({ 
+            message: 'Proporciona un código de 6 dígitos o usa un archivo con nombre XXXXXX.jpg'
+          });
+        }
+        articleCode = parsed.articleCode;
+      }
+      
+      console.log('[Upload] Received code:', articleCode, 'from body:', req.body.code, 'query:', req.query.code);
+      
+      // Validate article code format
+      if (!/^\d{6}$/.test(articleCode)) {
+        return res.status(400).json({ 
+          message: 'El código debe tener exactamente 6 dígitos numéricos'
+        });
+      }
+      
+      // Validate article exists in Dantia
+      const dantiaArticle = await dantiaService.validateArticleCode(articleCode);
+      if (!dantiaArticle) {
+        return res.status(400).json({ 
+          message: `El código de artículo ${articleCode} no existe en Dantia.`
+        });
+      }
+      
+      // Get next available suffix (auto-increment)
+      // If no images exist for this article, start at 100
+      let suffix = await getNextSuffix(articleCode);
+      
+      // Generate Cloudinary public ID
+      const publicId = `${articleCode}-${String(suffix).padStart(3, '0')}`;
+      
+      // Check if this exact image already exists
+      const isDuplicate = await checkDuplicate(articleCode, suffix);
+      if (isDuplicate) {
+        return res.status(400).json({ 
+          message: `Ya existe una imagen con código ${articleCode}-${String(suffix).padStart(3, '0')}.jpg`
+        });
+      }
+      
+      // Upload to Cloudinary
+      const cloudinaryResult = await cloudinaryService.uploadImage(
+        req.file.buffer,
+        publicId
+      );
+      
+      // Extract relevant Dantia info
+      const dantiaInfo = {
+        CodigoArticulo: dantiaArticle.CodigoArticulo,
+        DescripcionArticulo: dantiaArticle.DescripcionArticulo,
+        Descripcion: dantiaArticle.Descripcion,
+        _TipoMaceta: dantiaArticle._TipoMaceta,
+        _Maceta: dantiaArticle._Maceta,
+        _Altura: dantiaArticle._Altura,
+        Descripcion2Articulo: dantiaArticle.Descripcion2Articulo,
+        Precio1: dantiaArticle.Precio1,
+        CodigoFamilia: dantiaArticle.CodigoFamilia
+      };
+      
+      // Create image record in MongoDB
+      const image = new Image({
+        articleCode,
+        suffix: suffix,
+        originalFilename: req.file.originalname,
+        cloudinaryPublicId: cloudinaryResult.public_id,
+        cloudinaryUrl: cloudinaryResult.secure_url,
+        sizes: {
+          real: cloudinaryService.getSignedUrl(cloudinaryResult.public_id, 'real'),
+          medium: cloudinaryService.getSignedUrl(cloudinaryResult.public_id, 'medium'),
+          small: cloudinaryService.getSignedUrl(cloudinaryResult.public_id, 'small')
+        },
+        uploadedBy: req.user.userId,
+        dantiaInfo
+      });
+      
+      await image.save();
+      
+      res.status(201).json({
+        message: 'Imagen subida exitosamente.',
+        image: {
+          id: image._id,
+          articleCode: image.articleCode,
+          suffix: image.suffix,
+          filename: `${articleCode}-${String(suffix).padStart(3, '0')}.jpg`,
+          url: image.cloudinaryUrl,
+          sizes: image.sizes,
+          dantiaInfo: image.dantiaInfo
+        }
+      });
+      
+    } catch (error) {
+      next(error);
+    }
+  }
+});
+
+/**
+ * GET /api/images/filters
+ * Get available filter options (cached in MongoDB) - Employee+ access
+ * MUST be before /:id route to avoid Express matching /filters as :id
+ */
+router.get('/filters', authenticate, async (req, res, next) => {
+  try {
+    // Try to get from cache in MongoDB
+    let cachedFilters = await FilterOptions.findOne({ key: 'all' });
+    
+    if (!cachedFilters || isOld(cachedFilters.lastUpdated)) {
+      // Cache is empty or old - try to sync from Dantia
+      try {
+        console.log('[Filters] Sincronizando filtros desde Dantia...');
+        const dantiaFilters = await dantiaService.getFilterOptions();
+        
+        // Save to MongoDB
+        await FilterOptions.findOneAndUpdate(
+          { key: 'all' },
+          {
+            key: 'all',
+            values: [],
+            familias: dantiaFilters.familias,
+            macetas: dantiaFilters.macetas,
+            alturas: dantiaFilters.alturas,
+            lastUpdated: new Date()
+          },
+          { upsert: true, new: true }
+        );
+        
+        cachedFilters = await FilterOptions.findOne({ key: 'all' });
+      } catch (dantiaError) {
+        console.error('[Filters] Error sincronizando desde Dantia:', dantiaError.message);
+        // If Dantia fails but we have old cached data, use it
+        if (!cachedFilters) {
+          // Fall back to computing from existing images
+          const [familias, macetas, alturas] = await Promise.all([
+            Image.distinct('dantiaInfo.Descripcion'),
+            Image.distinct('dantiaInfo._Maceta'),
+            Image.distinct('dantiaInfo._Altura')
+          ]);
+          
+          return res.json({
+            familias: familias.filter(f => f).sort(),
+            macetas: macetas.filter(m => m).sort(),
+            alturas: alturas.filter(a => a).sort()
+          });
+        }
+      }
+    }
+    
+    if (cachedFilters) {
+      return res.json({
+        familias: cachedFilters.familias || [],
+        macetas: cachedFilters.macetas || [],
+        alturas: cachedFilters.alturas || []
+      });
+    }
+    
+    // Fallback: compute from existing images
+    const [familias, macetas, alturas] = await Promise.all([
+      Image.distinct('dantiaInfo.Descripcion'),
+      Image.distinct('dantiaInfo._Maceta'),
+      Image.distinct('dantiaInfo._Altura')
+    ]);
+    
+    res.json({
+      familias: familias.filter(f => f).sort(),
+      macetas: macetas.filter(m => m).sort(),
+      alturas: alturas.filter(a => a).sort()
+    });
+    
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * POST /api/images/filters/sync
+ * Force sync filters from Dantia API - Admin only
+ */
+router.post('/filters/sync', authenticate, authorize('admin'), async (req, res, next) => {
+  try {
+    console.log('[Filters] Sincronización forzada iniciada...');
+    
+    const dantiaFilters = await dantiaService.getFilterOptions();
+    
+    await FilterOptions.findOneAndUpdate(
+      { key: 'all' },
+      {
+        key: 'all',
+        values: [],
+        familias: dantiaFilters.familias,
+        macetas: dantiaFilters.macetas,
+        alturas: dantiaFilters.alturas,
+        lastUpdated: new Date()
+      },
+      { upsert: true }
+    );
+    
+    res.json({
+      message: 'Filtros sincronizados exitosamente',
+      familias: dantiaFilters.familias.length,
+      macetas: dantiaFilters.macetas.length,
+      alturas: dantiaFilters.alturas.length
+    });
+    
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Helper function to check if cache is old (older than 7 days)
+function isOld(lastUpdated) {
+  if (!lastUpdated) return true;
+  const week = 7 * 24 * 60 * 60 * 1000;
+  return Date.now() - new Date(lastUpdated).getTime() > week;
+}
+
+/**
+ * GET /api/images
+ * List images with pagination - Employee+ access
+ */
+router.get('/', authenticate, async (req, res, next) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 50;
+    const search = req.query.search || '';
+    const familia = req.query.familia || '';
+    const maceta = req.query.maceta || '';
+    const altura = req.query.altura || '';
+    
+    // Build query
+    const query = {};
+    if (search) {
+      query.articleCode = new RegExp(`^${search}`, 'i');
+    }
+    if (familia) {
+      query['dantiaInfo.Descripcion'] = familia;
+    }
+    if (maceta) {
+      query['dantiaInfo._Maceta'] = maceta;
+    }
+    if (altura) {
+      query['dantiaInfo._Altura'] = altura;
+    }
+    
+    const skip = (page - 1) * limit;
+    
+    const [images, total] = await Promise.all([
+      Image.find(query)
+        .populate('uploadedBy', 'email nombre')
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit),
+      Image.countDocuments(query)
+    ]);
+    
+    res.json({
+      images,
+      pagination: {
+        page,
+        limit,
+        total,
+        pages: Math.ceil(total / limit)
+      }
+    });
+    
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * GET /api/images/:id
+ * Get single image details
+ */
+router.get('/:id', authenticate, async (req, res, next) => {
+  try {
+    const image = await Image.findById(req.params.id)
+      .populate('uploadedBy', 'email nombre');
+    
+    if (!image) {
+      return res.status(404).json({ message: 'Imagen no encontrada.' });
+    }
+    
+    res.json({ image });
+    
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * GET /api/images/:id/download/:size
+ * Download image in specific size - Employee+ access
+ * Size: real, medium, small
+ */
+router.get('/:id/download/:size', authenticate, async (req, res, next) => {
+  try {
+    const { id, size } = req.params;
+    
+    // Validate size
+    if (!['real', 'medium', 'small'].includes(size)) {
+      return res.status(400).json({ 
+        message: 'Tamaño inválido. Use: real, medium o small.' 
+      });
+    }
+    
+    const image = await Image.findById(id);
+    
+    if (!image) {
+      return res.status(404).json({ message: 'Imagen no encontrada.' });
+    }
+    
+    // Get signed URL for the requested size
+    const downloadUrl = image.sizes[size];
+    
+    // Redirect to Cloudinary
+    res.redirect(downloadUrl);
+    
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * DELETE /api/images/:id
+ * Delete image - Editor/Admin only
+ */
+router.delete('/:id', 
+  authenticate, 
+  authorize('editor', 'admin'), 
+  async (req, res, next) => {
+    try {
+      const image = await Image.findById(req.params.id);
+      
+      if (!image) {
+        return res.status(404).json({ message: 'Imagen no encontrada.' });
+      }
+      
+      // Delete from Cloudinary
+      await cloudinaryService.deleteImage(image.cloudinaryPublicId);
+      
+      // Delete from MongoDB
+      await Image.findByIdAndDelete(req.params.id);
+      
+      res.json({ message: 'Imagen eliminada exitosamente.' });
+      
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+/**
+ * GET /api/images/article/:articleCode
+ * Get all images for specific article code
+ */
+router.get('/article/:articleCode', authenticate, async (req, res, next) => {
+  try {
+    const { articleCode } = req.params;
+    
+    const images = await Image.find({ articleCode })
+      .populate('uploadedBy', 'email nombre')
+      .sort({ suffix: 1 });
+    
+    res.json({ images });
+    
+  } catch (error) {
+    next(error);
+  }
+});
+
+module.exports = router;
