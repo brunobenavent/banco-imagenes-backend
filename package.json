@@ -4,6 +4,9 @@
   "type": "module",
   "description": "Image bank system for Viveros Guzmán - article images catalog",
   "main": "src/server.js",
+  "engines": {
+    "node": "22.x"
+  },
   "scripts": {
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",

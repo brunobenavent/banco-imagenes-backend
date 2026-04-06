@@ -2,9 +2,13 @@
   "version": 2,
   "builds": [
     {
-      "src": "api/index.js",
+      "src": "package.json",
       "use": "@vercel/node@3"
     }
   ],
-  "nodeVersion": "22.x"
+  "functions": {
+    "api/index.js": {
+      "maxDuration": 30
+    }
+  }
 }
