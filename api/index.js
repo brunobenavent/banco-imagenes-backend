@@ -1,34 +1,23 @@
-// api/index.js - Vercel serverless handler
+// api/index.js - Minimal test for Vercel (ESM)
 import express from 'express';
-import cors from 'cors';
-import config from '../src/config/index.js';
-import authRoutes from '../src/routes/auth.js';
-import imageRoutes from '../src/routes/images.js';
 
 const app = express();
 
-// CORS
-app.use(cors());
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(express.json());
 
-// Root route
-app.get('/api', (req, res) => {
-  res.json({ status: 'ok', message: 'Banco Images API Running' });
+app.get('/', (req, res) => {
+  console.log('ROOT CALLED');
+  res.json({ ok: true, message: 'Hello' });
 });
 
-// Health check
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok' });
+app.get('/test', (req, res) => {
+  console.log('TEST CALLED');
+  res.json({ ok: true, test: 'works' });
 });
 
-// API Routes
-app.use('/api/auth', authRoutes);
-app.use('/api/images', imageRoutes);
-
-// 404 handler
 app.use((req, res) => {
-  res.status(404).json({ message: 'Not found' });
+  console.log('NOT FOUND:', req.path);
+  res.status(404).json({ error: 'not found' });
 });
 
 export default app;
