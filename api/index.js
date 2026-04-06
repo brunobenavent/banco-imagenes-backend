@@ -4,14 +4,18 @@ import cors from 'cors';
 
 const app = express();
 
-// CORS
-app.use(cors());
+// CORS - allow all origins for Netlify frontend
+app.use(cors({
+  origin: '*',
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Import routes
-import authRoutes from './src/routes/auth.js';
-import imageRoutes from './src/routes/images.js';
+import authRoutes from '../src/routes/auth.js';
+import imageRoutes from '../src/routes/images.js';
 
 // Root route
 app.get('/', (req, res) => {
