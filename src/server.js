@@ -64,7 +64,6 @@ async function start() {
 
   } catch (error) {
     console.error('[Server] Error al iniciar:', error.message);
-    // Return null but don't crash
     return null;
   }
 }
@@ -88,24 +87,22 @@ async function stop() {
 // Handle uncaught exceptions (log but don't crash)
 process.on('uncaughtException', (err) => {
   console.error('[Server] Excepción no manejada:', err.message);
-  // Don't exit - just log
 });
 
 // Handle unhandled rejections (log but don't crash)
 process.on('unhandledRejection', (reason, promise) => {
   console.error('[Server] Rechazo no manejado:', reason);
-  // Don't exit - just log
 });
 
+// For local development
 if (import.meta.url === `file://${process.argv[1]}`) {
   start().catch((err) => {
     console.error('[Server] No se pudo iniciar:', err.message);
-    // Don't exit - the server might still work or will be retried
   });
 }
 
-export {
-  app,
-  start,
-  stop
-};
+// Vercel requires default export to be the app
+export default app;
+
+// Also export named functions for local development
+export { start, stop };
