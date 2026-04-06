@@ -10,14 +10,22 @@ import imageRoutes from './routes/images.js';
 
 const app = express();
 
-// Middleware
-app.use(cors());
+// CORS configuration - allow requests from Netlify frontend
+app.use(cors({
+  origin: true, // Allow all origins in Vercel (serverless will handle this)
+  credentials: true
+}));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Health check
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// Root route for Vercel
+app.get('/', (req, res) => {
+  res.json({ status: 'ok', message: 'Banco Images API', timestamp: new Date().toISOString() });
 });
 
 // API Routes
