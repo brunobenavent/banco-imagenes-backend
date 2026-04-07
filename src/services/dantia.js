@@ -24,6 +24,10 @@ let sessionCache = {
 
 // Login to Dantia API and get token
 export async function login() {
+  console.log('[DantiaService] Intentando login...');
+  console.log('[DantiaService] URL:', config.dantia.baseURL);
+  console.log('[DantiaService] Username:', config.dantia.username ? 'configurado' : 'FALTANTE');
+  
   // Prevent multiple concurrent login attempts
   if (sessionCache.isLoggingIn) {
     // Wait for existing login to complete
@@ -154,12 +158,19 @@ export async function getInactiveArticles(options = {}) {
 // Validate article code exists in Dantia (both active and inactive)
 export async function validateArticleCode(codigoArticulo) {
   try {
+    console.log('[validateArticleCode] Iniciando validación para código:', codigoArticulo);
+    console.log('[validateArticleCode] Dantia baseURL:', config.dantia.baseURL);
+    console.log('[validateArticleCode] Dantia username:', config.dantia.username ? ' configurado' : 'FALTANTE');
+    
     // Query for specific article - API returns both active and inactive by default
     const where = `CodigoEmpresa=1 and CodigoArticulo='${codigoArticulo}'`;
     const response = await queryArticles({ where, count: 1 });
     
+    console.log('[validateArticleCode] Response received, resources:', response.$resources?.length || 0);
+    
     const articles = response.$resources || [];
     if (articles.length === 0) {
+      console.log('[validateArticleCode] Artículo no encontrado en Dantia');
       return null;
     }
     
