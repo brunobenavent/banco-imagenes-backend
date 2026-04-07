@@ -44,3 +44,4 @@ temp/
 # Vite cache
 . vite/
 frontend/.vite/
+.vercel
