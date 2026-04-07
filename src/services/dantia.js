@@ -130,13 +130,14 @@ export async function queryArticles(options = {}) {
     });
     
     console.log(`[DantiaService] Response status: ${response.status}`);
-    return response.data;
+    return { data: response.data, error: null };
     
   } catch (error) {
     console.error('[DantiaService] Error consultando artículos:', error.message);
     console.error('[DantiaService] Error code:', error.code);
     console.error('[DantiaService] Error response:', error.response?.status);
-    return { $resources: [] };
+    // Return error info so caller knows what happened
+    return { data: { $resources: [] }, error: error.message };
   }
 }
 
@@ -172,11 +173,21 @@ export async function validateArticleCode(codigoArticulo) {
     
     // Query for specific article - API returns both active and inactive by default
     const where = `CodigoEmpresa=1 and CodigoArticulo='${codigoArticulo}'`;
-    const response = await queryArticles({ where, count: 1 });
+    const result = await queryArticles({ where, count: 1 });
     
-    console.log('[validateArticleCode] Response received, resources:', response.$resources?.length || 0);
+    // Check if there was an error in queryArticles
+    if (result.error) {
+      console.error('[validateArticleCode] Error de queryArticles:', result.error);
+      // Check if it's a timeout error
+      if (result.error.includes('timeout') || result.error.includes('ETIMEDOUT')) {
+        return { article: null, error: 'timeout' };
+      }
+      return { article: null, error: result.error };
+    }
     
-    const articles = response.$resources || [];
+    console.log('[validateArticleCode] Response received, resources:', result.data.$resources?.length || 0);
+    
+    const articles = result.data.$resources || [];
     if (articles.length === 0) {
       console.log('[validateArticleCode] Artículo no encontrado en Dantia');
       return { article: null, error: null };
@@ -198,6 +209,7 @@ export async function validateArticleCode(codigoArticulo) {
   } catch (error) {
     console.error('[DantiaService] Error validando código de artículo:', error.message);
     // Check if it's a timeout error (Dantia unreachable)
+    let lastError = null;
     if (error.message.includes('timeout') || error.code === 'ETIMEDOUT') {
       lastError = 'timeout';
     } else {
@@ -210,7 +222,8 @@ export async function validateArticleCode(codigoArticulo) {
 // Get all articles (paginated)
 export async function getAllArticles(options = {}) {
   const { page = 1, limit = 50 } = options;
-  return await queryArticles({ page, count: limit });
+  const result = await queryArticles({ page, count: limit });
+  return result.data;
 }
 
 // Get unique filter options from Dantia (familias, macetas, alturas)
@@ -227,8 +240,8 @@ export async function getFilterOptions() {
     const maxPages = 50; // Safety limit - 50 * 500 = 25k articles max
     
     for (page = 1; page <= maxPages; page++) {
-      const response = await queryArticles({ page, count: 500 });
-      const resources = response.$resources || [];
+      const result = await queryArticles({ page, count: 500 });
+      const resources = result.data.$resources || [];
       
       if (resources.length === 0) {
         break;
