@@ -120,16 +120,22 @@ export async function queryArticles(options = {}) {
   
   try {
     console.log(`[DantiaService] Consultando artículos. WHERE: ${where}`);
+    console.log(`[DantiaService] BaseURL: ${config.dantia.baseURL}`);
     
     const response = await dantiaClient.get('/adArticulosCatalogo/query', {
       params: { count, page, where },
-      timeout: 15000
+      timeout: 30000,
+      // Add headers to help with debugging
+      validateStatus: (status) => status < 500
     });
     
+    console.log(`[DantiaService] Response status: ${response.status}`);
     return response.data;
     
   } catch (error) {
     console.error('[DantiaService] Error consultando artículos:', error.message);
+    console.error('[DantiaService] Error code:', error.code);
+    console.error('[DantiaService] Error response:', error.response?.status);
     return { $resources: [] };
   }
 }
