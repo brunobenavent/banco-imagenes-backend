@@ -25,9 +25,12 @@ router.post('/register', async (req, res, next) => {
       return res.status(400).json({ message: 'Email, password y nombre son requeridos.' });
     }
     
-    // Check email domain
-    const emailDomain = email.split('@')[1];
-    if (emailDomain !== config.allowedEmailDomain) {
+    // Check email domain or specific allowed emails
+    const emailDomain = email.split('@')[1].toLowerCase();
+    const emailLower = email.toLowerCase();
+    const isAllowedEmail = config.allowedEmails.includes(emailLower);
+    
+    if (emailDomain !== config.allowedEmailDomain && !isAllowedEmail) {
       return res.status(400).json({ 
         message: `Solo se permiten correos con dominio @${config.allowedEmailDomain}`
       });

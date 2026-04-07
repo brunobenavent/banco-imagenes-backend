@@ -29,6 +29,7 @@ export default {
   
   // App settings
   allowedEmailDomain: 'viverosguzman.es',
+  allowedEmails: process.env.ALLOWED_EMAILS ? process.env.ALLOWED_EMAILS.split(',') : [],
   maxFileSize: 10 * 1024 * 1024, // 10MB
   allowedMimeTypes: ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif'],
   
