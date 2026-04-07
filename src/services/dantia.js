@@ -163,6 +163,8 @@ export async function getInactiveArticles(options = {}) {
 
 // Validate article code exists in Dantia (both active and inactive)
 export async function validateArticleCode(codigoArticulo) {
+  let lastError = null;
+  
   try {
     console.log('[validateArticleCode] Iniciando validación para código:', codigoArticulo);
     console.log('[validateArticleCode] Dantia baseURL:', config.dantia.baseURL);
@@ -177,7 +179,7 @@ export async function validateArticleCode(codigoArticulo) {
     const articles = response.$resources || [];
     if (articles.length === 0) {
       console.log('[validateArticleCode] Artículo no encontrado en Dantia');
-      return null;
+      return { article: null, error: null };
     }
     
     const article = articles[0];
@@ -185,15 +187,23 @@ export async function validateArticleCode(codigoArticulo) {
     const isInactive = article.StatusInactivo?.value === 1;
     
     // Return article info - include the inactive status
-    return {
-      ...article,
-      _Activo: !isInactive
+    return { 
+      article: {
+        ...article,
+        _Activo: !isInactive
+      }, 
+      error: null 
     };
     
   } catch (error) {
     console.error('[DantiaService] Error validando código de artículo:', error.message);
-    // Return null instead of throwing - this prevents server crash
-    return null;
+    // Check if it's a timeout error (Dantia unreachable)
+    if (error.message.includes('timeout') || error.code === 'ETIMEDOUT') {
+      lastError = 'timeout';
+    } else {
+      lastError = error.message;
+    }
+    return { article: null, error: lastError };
   }
 }
 

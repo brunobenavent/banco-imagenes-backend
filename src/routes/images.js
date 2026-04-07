@@ -107,13 +107,31 @@ router.post('/refresh-dantia/:id', authenticate, async function(req, res, next) 
     }
     
     let dantiaArticle = null;
+    let dantiaError = null;
+    
     try {
-      dantiaArticle = await validateArticleCode(image.articleCode);
-    } catch (dantiaError) {
-      console.error('[refresh-dantia] Error consultando Dantia:', dantiaError.message);
+      const result = await validateArticleCode(image.articleCode);
+      dantiaArticle = result.article;
+      dantiaError = result.error;
+    } catch (err) {
+      dantiaError = err.message;
+    }
+    
+    // Check if Dantia is unreachable
+    if (dantiaError && dantiaError.includes('timeout')) {
+      console.error('[refresh-dantia] Error: Dantia no está accesible desde Vercel');
+      return res.status(503).json({ 
+        message: 'El servidor de Dantia no está accesible desde el servidor de producción. Por favor, contacta al administrador o usa el servidor local para actualizar este código.'
+      });
+    }
+    
+    // Check if Dantia returned an error
+    if (dantiaError) {
+      console.error('[refresh-dantia] Error consultando Dantia:', dantiaError);
       return res.status(503).json({ message: 'Error de conexión con Dantia. Intenta de nuevo.' });
     }
     
+    // Check if article was not found
     if (!dantiaArticle) {
       return res.status(404).json({ 
         message: 'Código de artículo no encontrado en Dantia: ' + image.articleCode
