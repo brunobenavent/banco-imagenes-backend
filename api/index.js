@@ -1,8 +1,28 @@
 // api/index.js - Vercel serverless handler
 import express from 'express';
 import cors from 'cors';
+import mongoose from 'mongoose';
+import 'dotenv/config';
 
 const app = express();
+
+// Connect to MongoDB for Vercel
+const connectDB = async () => {
+  if (mongoose.connection.readyState === 0) {
+    try {
+      await mongoose.connect(process.env.MONGODB_URI);
+      console.log('Connected to MongoDB (Vercel)');
+    } catch (error) {
+      console.error('MongoDB connection error:', error.message);
+    }
+  }
+};
+
+// Run connectDB for each request in serverless
+app.use(async (req, res, next) => {
+  await connectDB();
+  next();
+});
 
 // CORS - allow specific origins for Netlify frontend
 app.use(cors({
