@@ -1,6 +1,7 @@
 // src/server.js - Simplified for Vercel
 import express from 'express';
 import cors from 'cors';
+import mongoose from 'mongoose';
 import config from './config/index.js';
 
 // Import routes
@@ -8,6 +9,16 @@ import authRoutes from './routes/auth.js';
 import imageRoutes from './routes/images.js';
 
 const app = express();
+
+// Connect to MongoDB
+const connectDB = async () => {
+  try {
+    await mongoose.connect(config.mongodbUri);
+    console.log('Connected to MongoDB');
+  } catch (error) {
+    console.error('MongoDB connection error:', error.message);
+  }
+};
 
 // CORS
 app.use(cors());
@@ -42,8 +53,10 @@ app.use((err, req, res, next) => {
 // Start server only when running locally (not on Vercel)
 if (process.env.VERCEL === undefined) {
   const PORT = process.env.PORT || 3000;
-  app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
+  connectDB().then(() => {
+    app.listen(PORT, () => {
+      console.log(`Server running on port ${PORT}`);
+    });
   });
 }
 
